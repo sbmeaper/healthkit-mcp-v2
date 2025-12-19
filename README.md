@@ -15,6 +15,8 @@ The mcp server will accumulate input and output token counts and retries.  It wi
 
 The mcp server configuration will include a value for database select retries.
 
-The mcp server will send the nql and the database semantic detail to the llm.   The llm will return sql.  The mcp server will run the sql select against the duckdb database.   If the first select statement returns an error, the mcp server will send the error to the llm and receive a revised select statement.  It will attempt retries capped by the configuration file value for retries.
+The mcp server will send the nql and the semantic detail to the llm.   The llm will return sql.  The mcp server will run the sql select against the duckdb database.   If the first select statement returns an error, the mcp server will send the error to the llm and receive a revised select statement.  It will attempt retries capped by the configuration file value for retries.
 
 At startup the mcp server will run a series of queries to create a semantic layer in memory.  the semantic memory layer will only be run at startup, and subsequently used for every mcp server call.  if the underlying data table changes, the mcp server must be restarted to reload the semantic layer.
+
+The sql select statements that define the semantic layer will be stored in the mcp server configuration file.  
