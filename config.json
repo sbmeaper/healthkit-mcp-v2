@@ -12,14 +12,18 @@
     "auto_queries": [
       "SELECT DISTINCT type FROM '{parquet_path}' ORDER BY type",
       "SELECT MIN(start_date) as min_date, MAX(start_date) as max_date FROM '{parquet_path}'",
-      "SELECT type, COUNT(*) as row_count FROM '{parquet_path}' GROUP BY type ORDER BY row_count DESC"
+      "SELECT type, COUNT(*) as row_count FROM '{parquet_path}' GROUP BY type ORDER BY row_count DESC",
+      "SELECT DISTINCT type, value_category FROM '{parquet_path}' WHERE value_category IS NOT NULL ORDER BY type, value_category"
     ],
-  "static_context": [
-    "All HealthKit data is in a single table. The 'type' column indicates the measurement type (e.g., HKQuantityTypeIdentifierStepCount).",
-    "Dates are stored as TIMESTAMP. Use date functions for filtering by day, month, or year.",
-    "The 'value' column contains the numeric measurement. Units vary by type and are in the 'unit' column.",
-    "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit.",
-    "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'."
-  ]
+    "static_context": [
+      "All HealthKit data is in a single table. The 'type' column indicates the measurement type.",
+      "Dates are stored as strings in 'YYYY-MM-DD HH:MM:SS' format. Use date functions for filtering.",
+      "The 'value' column contains numeric measurements. The 'value_category' column contains categorical values (like sleep stages).",
+      "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit.",
+      "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'.",
+      "For sleep data: 'value_category' contains sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed. To calculate actual sleep time, sum duration of AsleepCore + AsleepDeep + AsleepREM rows only. Calculate duration as (end_date - start_date).",
+      "For AppleStandHour: 'value_category' is either 'Stood' or 'Idle'.",
+      "To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings."
+    ]
   }
 }
