@@ -1,0 +1,24 @@
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "endpoint": "http://localhost:11434/api/generate"
+  },
+  "database": {
+    "parquet_path": "/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet",
+    "max_retries": 3
+  },
+  "semantic_layer": {
+    "auto_queries": [
+      "SELECT DISTINCT type FROM '{parquet_path}' ORDER BY type",
+      "SELECT MIN(start_date) as min_date, MAX(start_date) as max_date FROM '{parquet_path}'",
+      "SELECT type, COUNT(*) as row_count FROM '{parquet_path}' GROUP BY type ORDER BY row_count DESC"
+    ],
+  "static_context": [
+    "All HealthKit data is in a single table. The 'type' column indicates the measurement type (e.g., HKQuantityTypeIdentifierStepCount).",
+    "Dates are stored as TIMESTAMP. Use date functions for filtering by day, month, or year.",
+    "The 'value' column contains the numeric measurement. Units vary by type and are in the 'unit' column.",
+    "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit."
+    ]
+  }
+}
