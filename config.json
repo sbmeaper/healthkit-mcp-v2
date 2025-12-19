@@ -18,7 +18,8 @@
     "All HealthKit data is in a single table. The 'type' column indicates the measurement type (e.g., HKQuantityTypeIdentifierStepCount).",
     "Dates are stored as TIMESTAMP. Use date functions for filtering by day, month, or year.",
     "The 'value' column contains the numeric measurement. Units vary by type and are in the 'unit' column.",
-    "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit."
-    ]
+    "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit.",
+    "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'."
+  ]
   }
 }
