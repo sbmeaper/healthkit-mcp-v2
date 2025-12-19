@@ -1,6 +1,6 @@
 # healthki-mcp-v2
 
-I want to create a mcp server that uses my Apple healthkit data.  Clients can use it to answer nql about my health data.  For example, how many steps did I walk last month. 
+I want to create a mcp server that uses my Apple healthkit data.  Clients can use it to answer nql about my health data.  For example, how many steps did I walk last month.  Or, what what day of the week do i get the most sleep on average last month.
 
 
 Key requirements for the mcp server project:
