@@ -58,23 +58,24 @@ SELECT"""
     # Extract SQL from response
     sql_text = result["text"].strip()
 
-    # The prompt ends with "SELECT" so the model should continue from there
-    # Prepend SELECT back to make it a complete statement
-    sql = "SELECT " + sql_text
-
-    # Clean up any markdown formatting
-    if "```" in sql:
-        # If model wrapped in code blocks, extract the SQL
-        lines = sql.split("\n")
+    # Clean markdown formatting FIRST (before prepending SELECT)
+    if "```" in sql_text:
+        lines = sql_text.split("\n")
         clean_lines = []
         in_code_block = False
         for line in lines:
             if line.strip().startswith("```"):
                 in_code_block = not in_code_block
                 continue
-            if not in_code_block or not line.strip().startswith("```"):
-                clean_lines.append(line)
-        sql = "\n".join(clean_lines).strip()
+            clean_lines.append(line)
+        sql_text = "\n".join(clean_lines).strip()
+
+    # The prompt ends with "SELECT" so model should continue from there
+    # But sometimes model includes SELECT anyway - check before prepending
+    if sql_text.upper().startswith("SELECT"):
+        sql = sql_text
+    else:
+        sql = "SELECT " + sql_text
 
     # Remove any trailing explanation the model might add
     # Look for common patterns that indicate end of SQL
