@@ -23,7 +23,9 @@
       "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'.",
       "For sleep data: 'value_category' contains sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed. To calculate actual sleep time, sum duration of AsleepCore + AsleepDeep + AsleepREM rows only. Calculate duration as (end_date - start_date).",
       "For AppleStandHour: 'value_category' is either 'Stood' or 'Idle'.",
-      "To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings."
+      "To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings.",
+      "Multiple apps often sync with HealthKit and write duplicate records for the same measurement. For discrete metrics like BodyMass, BloodPressure, or similar once-daily measurements, deduplicate by grouping on DATE and taking AVG(value) per day. For continuous metrics like StepCount or HeartRate, multiple readings per day are expected and valid — do not deduplicate those.",
+      "When filtering or grouping by year, use explicit conditions for each year (e.g., start_date LIKE '2024-%' or SUBSTR(start_date, 1, 4) = '2024'). Never use ELSE clauses to bucket remaining records into a year — this incorrectly captures data from other years."
     ]
   }
 }
