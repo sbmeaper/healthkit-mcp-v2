@@ -1,7 +1,7 @@
 # healthkit-mcp-v2 — Project Status Summary
 
-**Last Updated:** December 19, 2025  
-**Status:** Major refactoring complete, awaiting testing with new model
+**Last Updated:** December 20, 2025  
+**Status:** Stable and working
 
 ---
 
@@ -38,55 +38,28 @@ Claude Desktop → MCP Server (Python) → Ollama (Qwen 2.5 Coder 7B) → DuckDB
 
 ---
 
-## Recent Session: What We Did (Dec 19, 2025)
+## Recent Changes (Dec 19, 2025)
 
-We identified 4 improvements based on research into Qwen2.5-Coder best practices and implemented all of them:
+Four improvements were implemented based on Qwen2.5-Coder best practices:
 
-### Issue #1: Wrong Model Variant
-- **Problem:** Was using `qwen2.5:7b` (general model)
-- **Solution:** Switch to `qwen2.5-coder:7b` (code-specialized, trained on 5.5T tokens including SQL)
-- **Status:** Model was downloading (~30 min). Config updated to use it.
-- **Action needed:** Verify `ollama list` shows `qwen2.5-coder:7b` is available
+1. **Switched to code-specialized model** — `qwen2.5-coder:7b` instead of general `qwen2.5:7b`
+2. **Restructured prompt template** — Matches Qwen2.5-Coder's text-to-SQL training format (DDL schema → sample rows → hints → question → `SELECT` prefix)
+3. **Added DuckDB-specific hints** — Explicit guidance on `DATE_DIFF()`, `CAST()`, and warnings against SQLite syntax
+4. **Cleaner table reference** — Created `health_data` view at startup instead of embedding full parquet path in prompts
 
-### Issue #2: Prompt Template Structure
-- **Problem:** Generic prompt format didn't match Qwen2.5-Coder's training format
-- **Solution:** Restructured prompt to match their text-to-SQL training:
-  1. Schema as CREATE TABLE DDL
-  2. Sample data rows
-  3. Additional knowledge/hints as SQL comments
-  4. Natural language question
-  5. Prompt ends with `SELECT` to prime continuation
-- **Status:** ✅ Complete — `semantic_layer.py` and `llm_client.py` rewritten
-
-### Issue #3: DuckDB-Specific Hints
-- **Problem:** Model was generating SQLite syntax (julianday, strftime) instead of DuckDB
-- **Solution:** Added explicit DuckDB dialect hints with concrete examples:
-  - `DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))`
-  - Explicit "DO NOT use julianday()" warnings
-  - Complete working sleep query example
-- **Status:** ✅ Complete — `config.json` rewritten with detailed hints
-
-### Issue #4: Cleaner Table Reference
-- **Problem:** LLM prompt included 83-character parquet path (visual noise)
-- **Solution:** 
-  - Created persistent DuckDB connection at server startup
-  - Register `health_data` view pointing to parquet file
-  - LLM now generates `SELECT ... FROM health_data` (cleaner, fewer tokens)
-- **Status:** ✅ Complete — `query_executor.py` rewritten
+All changes are deployed and the system is working well.
 
 ---
 
-## Files Modified
+## Core Files
 
-All 4 core Python files were rewritten. Copy these from Claude's output to replace existing files:
-
-| File | Changes |
+| File | Purpose |
 |------|---------|
-| `config.json` | New model (`qwen2.5-coder:7b`), detailed DuckDB hints with examples |
-| `semantic_layer.py` | Returns structured dict, formats as DDL + samples + hints |
-| `llm_client.py` | Qwen-optimized prompt ending with `SELECT`, uses `health_data` table |
-| `query_executor.py` | Persistent connection, creates `health_data` view at startup |
-| `server.py` | Minor change to call `format_context_for_prompt()` |
+| `config.json` | Model config, parquet path, semantic layer hints |
+| `semantic_layer.py` | Builds context from auto-queries and static hints, formats as DDL + samples |
+| `llm_client.py` | Sends prompt to Ollama, parses SQL response |
+| `query_executor.py` | Persistent DuckDB connection, creates `health_data` view, executes SQL |
+| `server.py` | MCP server entry point |
 
 ---
 
@@ -164,6 +137,8 @@ File: `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
+**Note:** Changes to config.json or semantic layer require a full Claude Desktop restart since context is built once at startup.
+
 ---
 
 ## Data Schema (Parquet)
@@ -202,33 +177,6 @@ source_name       VARCHAR     -- device/app that recorded the data
 
 ---
 
-## Next Steps When Resuming
-
-1. **Verify model downloaded:**
-   ```bash
-   ollama list
-   ```
-   Should show `qwen2.5-coder:7b`
-
-2. **Copy all updated files to project** (if not already done)
-
-3. **Restart Claude Desktop** (to reload MCP server)
-
-4. **Test the sleep query that was failing:**
-   ```
-   "How much did I sleep in November 2025?"
-   ```
-   Expected: Should now use `DATE_DIFF` and return actual hours
-
-5. **Test a few other queries to verify nothing broke:**
-   - "How many steps did I take in 2024?" (should still work)
-   - "What was my average heart rate last week?"
-   - "How many walking workouts did I do in 2025?"
-
-6. **If sleep query still fails:** Check the generated SQL in diagnostics. The hints may need further refinement, or we may need to add few-shot examples directly in the prompt.
-
----
-
 ## Debugging Tips
 
 **MCP server logs:**
@@ -252,29 +200,37 @@ ollama run qwen2.5-coder:7b "Write a DuckDB SQL query to count rows in a table c
 python -c "import duckdb; print(duckdb.execute(\"SELECT SUM(DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))) / 60.0 AS hours FROM '/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet' WHERE type = 'SleepAnalysis' AND value_category IN ('AsleepCore', 'AsleepDeep', 'AsleepREM') AND start_date >= '2025-11-01' AND start_date < '2025-12-01'\").fetchall())"
 ```
 
+**Check Ollama model:**
+```bash
+ollama list
+```
+
 ---
 
 ## Potential Future Work
 
-1. **If current changes don't fix sleep queries:** Add few-shot examples directly in prompt (show input question → output SQL pairs)
-2. **Try larger model:** `qwen2.5-coder:14b` or `qwen2.5-coder:32b` if 7B still struggles
-3. **Fine-tune on DuckDB:** There's a `motherduckdb/duckdb-text2sql-25k` dataset for DuckDB-specific training
-4. **Consider SQLCoder:** Alternative model specifically fine-tuned for SQL generation
+1. **Add few-shot examples** — Include input question → output SQL pairs directly in prompt if complex queries still struggle
+2. **Try larger model** — `qwen2.5-coder:14b` or `qwen2.5-coder:32b` if 7B has accuracy issues
+3. **Fine-tune on DuckDB** — `motherduckdb/duckdb-text2sql-25k` dataset available
+4. **Consider SQLCoder** — Alternative model specifically fine-tuned for SQL generation
 
 ---
 
-## Research Findings (from this session)
+## Key Learnings
 
-**Qwen2.5-Coder Technical Report key points:**
-- Trained on 5.5 trillion tokens including extensive SQL data
-- Text-to-SQL prompt format: DDL schema → sample rows → hints → question
-- Outperforms larger models on Spider/BIRD SQL benchmarks
-- The `-coder` variant significantly better than base `qwen2.5` for SQL tasks
+**Prompt engineering for semantic layer:**
+- Static context should include specific guidance on when to use `SUM(value)` vs `COUNT(*)` 
+- DuckDB-specific syntax hints are essential (`DATE_DIFF` not `julianday`)
+- Complete working examples in hints significantly improve SQL generation
 
-**DuckDB vs SQLite differences that matter:**
-- Date functions: `DATE_DIFF()` not `julianday()`
-- Timestamp casting: `CAST(x AS TIMESTAMP)` 
-- No `strftime()` — use `YEAR()`, `MONTH()`, etc.
+**Data quality approach:**
+- Fix issues at semantic layer for scalability (vs fixing at source)
+- Auto-queries for schema discovery help LLM understand categorical data structures
+
+**Qwen2.5-Coder best practices:**
+- Text-to-SQL format: DDL schema → sample rows → hints → question
+- End prompt with `SELECT` to prime continuation
+- The `-coder` variant significantly better than base model for SQL tasks
 
 ---
 
@@ -286,7 +242,7 @@ python -c "import duckdb; print(duckdb.execute(\"SELECT SUM(DATE_DIFF('minute', 
 
 **Ollama:**
 - Installed via macOS app (runs in menu bar)
-- Model: `qwen2.5-coder:7b` (after download completes)
+- Model: `qwen2.5-coder:7b`
 
 **Hardware:**
-- M4 MacBook
+- M4 MacBook, 16GB RAM
