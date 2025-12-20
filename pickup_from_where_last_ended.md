@@ -22,7 +22,7 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 | `config.json` | Model config, parquet path, log path, semantic layer hints |
 | `llm_client.py` | Sends prompt to Ollama, parses SQL response |
 | `query_executor.py` | DuckDB connection, creates `health_data` view, executes SQL, retry logic, logging calls |
-| `query_logger.py` | Initializes log table, provides `log_attempt()` function |
+| `query_logger.py` | Initializes log table, provides `log_attempt()` function (transactional — no persistent lock) |
 | `semantic_layer.py` | Builds context from auto-queries + static hints |
 | `server.py` | MCP server entry point, extracts client name from Context |
 
@@ -72,18 +72,16 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 
 **Restart required:** Changes to config.json or semantic layer need full Claude Desktop restart
 
-**Log file access:** See "Pending Refactor" below — currently requires Claude Desktop to be closed for direct log queries.
-
 ---
 
 ## Querying the Logs
 
-With Claude Desktop closed:
+With transactional logging (completed Dec 2025), log queries work even while Claude Desktop is running:
 
 ```bash
 cd ~/PycharmProjects/healthkit-mcp-v2
 source .venv/bin/activate
-python -c "import duckdb; con = duckdb.connect('query_logs.duckdb'); print(con.execute('SELECT * FROM query_log ORDER BY timestamp DESC LIMIT 10').fetchall())"
+python -c "import duckdb; con = duckdb.connect('query_logs.duckdb'); print(con.execute('SELECT * FROM query_log ORDER BY timestamp DESC LIMIT 10').fetchall()); con.close()"
 ```
 
 Useful queries:
@@ -118,19 +116,11 @@ Build a **log analyzer as a separate MCP server**. The log is the central artifa
 
 ---
 
-## Pending Refactor: Transactional Logging
+## Completed: Transactional Logging (Dec 2025)
 
-### Problem
-`query_logger.py` currently uses a persistent cached connection (`_log_connection` global). This locks `query_logs.duckdb` while Claude Desktop is running, blocking the analyzer MCP from reading.
+**Problem:** `query_logger.py` previously used a persistent cached connection (`_log_connection` global). This locked `query_logs.duckdb` while Claude Desktop was running, blocking other processes from reading.
 
-### Solution
-Refactor to transactional: open connection, write, close — per `log_attempt()` call. Lock held only milliseconds.
-
-### Performance Impact
-Negligible for human-paced queries. DuckDB docs note overhead for frequent reconnects, but logging is sporadic.
-
-### Deferred Decision
-Abstracting the logging interface for future cloud scale (Postgres backend, connection pooling, etc.) — decided to defer. Accept a refactor later when moving to cloud. For now, transactional DuckDB is sufficient.
+**Solution:** Refactored to transactional: open connection, write, close — per `log_attempt()` call. Lock held only milliseconds. Verified working Dec 20, 2025.
 
 ---
 
