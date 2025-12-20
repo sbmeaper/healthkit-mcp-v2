@@ -72,7 +72,7 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 
 **Restart required:** Changes to config.json or semantic layer need full Claude Desktop restart
 
-**Log file access:** DuckDB doesn't allow concurrent access. Quit Claude Desktop before querying `query_logs.duckdb` directly.
+**Log file access:** See "Pending Refactor" below — currently requires Claude Desktop to be closed for direct log queries.
 
 ---
 
@@ -100,17 +100,37 @@ SELECT client, COUNT(*) FROM query_log GROUP BY client;
 
 ---
 
-## Next Up: QA Harness
+## Next Up: Log Analyzer MCP
 
-### Goal
-Systematically test and improve the semantic layer using automated test cases.
+### Architecture Decision
+Build a **log analyzer as a separate MCP server**. The log is the central artifact — decouple how queries get generated from how they get analyzed.
 
-### Concept
-Separate Python program that:
-- Generates health-related NLQ test cases
-- Calls the MCP server (with logging capturing results)
-- Uses LLM-as-judge to evaluate if SQL logic matches intent
-- Identifies patterns for semantic layer improvements
+### What It Does
+- Reads `query_logs.duckdb`
+- Identifies patterns (failures, retries, common error types)
+- Suggests semantic layer improvements
+- Accessed via Claude Desktop with natural language (e.g., "analyze the health server logs for the past 2 days")
+
+### Why This Approach
+- Log entries come from anywhere: normal Claude Desktop usage, future automated test bots, etc.
+- Analysis is independent of query source
+- Natural language interface via MCP keeps workflow consistent
+
+---
+
+## Pending Refactor: Transactional Logging
+
+### Problem
+`query_logger.py` currently uses a persistent cached connection (`_log_connection` global). This locks `query_logs.duckdb` while Claude Desktop is running, blocking the analyzer MCP from reading.
+
+### Solution
+Refactor to transactional: open connection, write, close — per `log_attempt()` call. Lock held only milliseconds.
+
+### Performance Impact
+Negligible for human-paced queries. DuckDB docs note overhead for frequent reconnects, but logging is sporadic.
+
+### Deferred Decision
+Abstracting the logging interface for future cloud scale (Postgres backend, connection pooling, etc.) — decided to defer. Accept a refactor later when moving to cloud. For now, transactional DuckDB is sufficient.
 
 ---
 
