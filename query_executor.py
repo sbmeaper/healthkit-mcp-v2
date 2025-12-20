@@ -1,5 +1,8 @@
 import duckdb
+import uuid
+import time
 from typing import Optional
+from query_logger import log_attempt
 
 # Persistent connection - created once, reused for all queries
 _connection: Optional[duckdb.DuckDBPyConnection] = None
@@ -27,24 +30,29 @@ def execute_query(sql: str, config: dict) -> dict:
 
     con = get_connection(config)
 
+    start_time = time.perf_counter()
     try:
         result = con.execute(sql).fetchall()
         columns = [desc[0] for desc in con.description]
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
         return {
             "success": True,
             "columns": columns,
             "rows": result,
             "row_count": len(result),
-            "error": None
+            "error": None,
+            "execution_time_ms": execution_time_ms
         }
     except Exception as e:
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
         return {
             "success": False,
             "columns": None,
             "rows": None,
             "row_count": 0,
-            "error": str(e)
+            "error": str(e),
+            "execution_time_ms": execution_time_ms
         }
     # Note: no finally/close - we keep the connection alive
 
@@ -53,10 +61,12 @@ def execute_with_retry(
         question: str,
         semantic_context: str,
         config: dict,
-        generate_sql_fn
+        generate_sql_fn,
+        client_name: str = "unknown"
 ) -> dict:
     """Execute a query with LLM-assisted retry on failure."""
 
+    request_id = str(uuid.uuid4())
     max_retries = config["database"]["max_retries"]
     errors = []
     total_input_tokens = 0
@@ -70,6 +80,20 @@ def execute_with_retry(
 
     for attempt in range(max_retries + 1):
         query_result = execute_query(sql, config)
+
+        # Log this attempt
+        log_attempt(
+            config=config,
+            request_id=request_id,
+            attempt_number=attempt + 1,
+            client=client_name,
+            nlq=question,
+            sql=sql,
+            success=query_result["success"],
+            error_message=query_result["error"],
+            row_count=query_result["row_count"] if query_result["success"] else None,
+            execution_time_ms=query_result["execution_time_ms"]
+        )
 
         if query_result["success"]:
             return {
@@ -124,7 +148,7 @@ if __name__ == "__main__":
     question = "How many rows are in the table?"
     print(f"Question: {question}\n")
 
-    result = execute_with_retry(question, formatted_context, config, generate_sql)
+    result = execute_with_retry(question, formatted_context, config, generate_sql, client_name="test_harness")
 
     if result["success"]:
         print(f"Columns: {result['columns']}")

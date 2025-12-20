@@ -6,6 +6,7 @@
   },
   "database": {
     "parquet_path": "/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet",
+    "log_path": "~/PycharmProjects/healthkit-mcp-v2/query_logs.duckdb",
     "max_retries": 3
   },
   "semantic_layer": {
