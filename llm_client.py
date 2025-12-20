@@ -27,31 +27,66 @@ def call_llm(prompt: str, config: dict) -> dict:
 
 
 def generate_sql(question: str, semantic_context: str, config: dict) -> dict:
-    """Generate SQL from a natural language question."""
+    """
+    Generate SQL from a natural language question.
 
-    prompt = f"""You are a SQL expert. Given the following data context and a user question, generate a DuckDB SQL SELECT statement to answer the question.
+    Uses prompt format aligned with Qwen2.5-Coder's text-to-SQL training:
+    1. Schema as CREATE TABLE DDL
+    2. Sample data rows
+    3. Additional knowledge/hints
+    4. Natural language question
+    """
+
+    # Qwen2.5-Coder optimized prompt structure
+    prompt = f"""Generate a DuckDB SQL query to answer the question based on the schema and data below.
 
 {semantic_context}
 
-Important rules:
-- Return ONLY the SQL statement, no explanations
-- The table is a Parquet file, reference it as: '{config["database"]["parquet_path"]}'
-- Use single quotes for string literals
-- The 'type' column contains values like 'StepCount', 'HeartRate', etc. (without the HKQuantityTypeIdentifier prefix)
+/* Query Rules */
+-- Return ONLY a valid DuckDB SQL SELECT statement
+-- The table is named: health_data
+-- Use single quotes for strings; escape apostrophes by doubling: 'Scott''s Watch'
+-- For date filtering, cast strings to TIMESTAMP: CAST(start_date AS TIMESTAMP)
+-- For date arithmetic, use DATE_DIFF: DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))
 
-User question: {question}
+Question: {question}
 
-SQL:"""
+SELECT"""
 
     result = call_llm(prompt, config)
 
-    # Extract SQL from response (strip whitespace and any markdown formatting)
-    sql = result["text"].strip()
-    if sql.startswith("```"):
-        sql = sql.split("\n", 1)[1] if "\n" in sql else sql[3:]
-    if sql.endswith("```"):
-        sql = sql.rsplit("```", 1)[0]
+    # Extract SQL from response
+    sql_text = result["text"].strip()
+
+    # The prompt ends with "SELECT" so the model should continue from there
+    # Prepend SELECT back to make it a complete statement
+    sql = "SELECT " + sql_text
+
+    # Clean up any markdown formatting
+    if "```" in sql:
+        # If model wrapped in code blocks, extract the SQL
+        lines = sql.split("\n")
+        clean_lines = []
+        in_code_block = False
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if not in_code_block or not line.strip().startswith("```"):
+                clean_lines.append(line)
+        sql = "\n".join(clean_lines).strip()
+
+    # Remove any trailing explanation the model might add
+    # Look for common patterns that indicate end of SQL
+    for terminator in ["\n\nThis query", "\n\nExplanation", "\n\nNote:", "\n\n--"]:
+        if terminator in sql:
+            sql = sql.split(terminator)[0]
+
     sql = sql.strip()
+
+    # Remove trailing semicolon issues (multiple semicolons)
+    while sql.endswith(";;"):
+        sql = sql[:-1]
 
     return {
         "sql": sql,
@@ -61,16 +96,17 @@ SQL:"""
 
 
 if __name__ == "__main__":
-    from semantic_layer import load_config, build_semantic_context
+    from semantic_layer import load_config, build_semantic_context, format_context_for_prompt
 
     config = load_config()
     context = build_semantic_context(config)
+    formatted_context = format_context_for_prompt(context)
 
     # Test with a simple question
     question = "How many steps did I take in 2024?"
     print(f"Question: {question}\n")
 
-    result = generate_sql(question, context, config)
+    result = generate_sql(question, formatted_context, config)
     print(f"Generated SQL:\n{result['sql']}\n")
     print(f"Input tokens: {result['input_tokens']}")
     print(f"Output tokens: {result['output_tokens']}")

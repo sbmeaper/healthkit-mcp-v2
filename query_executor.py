@@ -1,12 +1,31 @@
 import duckdb
 from typing import Optional
 
+# Persistent connection - created once, reused for all queries
+_connection: Optional[duckdb.DuckDBPyConnection] = None
+
+
+def get_connection(config: dict) -> duckdb.DuckDBPyConnection:
+    """Get or create a persistent DuckDB connection with health_data view."""
+    global _connection
+
+    if _connection is None:
+        parquet_path = config["database"]["parquet_path"]
+        _connection = duckdb.connect()
+
+        # Create a view so LLM can reference 'health_data' instead of full path
+        _connection.execute(f"""
+            CREATE OR REPLACE VIEW health_data AS 
+            SELECT * FROM '{parquet_path}'
+        """)
+
+    return _connection
+
 
 def execute_query(sql: str, config: dict) -> dict:
-    """Execute SQL against the Parquet file and return results with metadata."""
+    """Execute SQL against the health_data view and return results with metadata."""
 
-    parquet_path = config["database"]["parquet_path"]
-    con = duckdb.connect()
+    con = get_connection(config)
 
     try:
         result = con.execute(sql).fetchall()
@@ -27,8 +46,7 @@ def execute_query(sql: str, config: dict) -> dict:
             "row_count": 0,
             "error": str(e)
         }
-    finally:
-        con.close()
+    # Note: no finally/close - we keep the connection alive
 
 
 def execute_with_retry(
@@ -95,17 +113,18 @@ def execute_with_retry(
 
 
 if __name__ == "__main__":
-    from semantic_layer import load_config, build_semantic_context
+    from semantic_layer import load_config, build_semantic_context, format_context_for_prompt
     from llm_client import generate_sql
 
     config = load_config()
     context = build_semantic_context(config)
+    formatted_context = format_context_for_prompt(context)
 
     # Test with a simple question
     question = "How many rows are in the table?"
     print(f"Question: {question}\n")
 
-    result = execute_with_retry(question, context, config, generate_sql)
+    result = execute_with_retry(question, formatted_context, config, generate_sql)
 
     if result["success"]:
         print(f"Columns: {result['columns']}")

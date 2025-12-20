@@ -1,7 +1,7 @@
 {
   "llm": {
     "provider": "ollama",
-    "model": "qwen2.5:7b",
+    "model": "qwen2.5-coder:7b",
     "endpoint": "http://localhost:11434/api/generate"
   },
   "database": {
@@ -16,16 +16,35 @@
       "SELECT DISTINCT type, value_category FROM '{parquet_path}' WHERE value_category IS NOT NULL ORDER BY type, value_category"
     ],
     "static_context": [
-      "All HealthKit data is in a single table. The 'type' column indicates the measurement type.",
-      "Dates are stored as strings in 'YYYY-MM-DD HH:MM:SS' format. Use date functions for filtering.",
-      "The 'value' column contains numeric measurements. The 'value_category' column contains categorical values (like sleep stages).",
-      "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit.",
-      "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'.",
-      "For sleep data: 'value_category' contains sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed. To calculate actual sleep time, sum duration of AsleepCore + AsleepDeep + AsleepREM rows only. Calculate duration as (end_date - start_date).",
-      "For AppleStandHour: 'value_category' is either 'Stood' or 'Idle'.",
-      "To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings.",
-      "Multiple apps often sync with HealthKit and write duplicate records for the same measurement. For discrete metrics like BodyMass, BloodPressure, or similar once-daily measurements, deduplicate by grouping on DATE and taking AVG(value) per day. For continuous metrics like StepCount or HeartRate, multiple readings per day are expected and valid — do not deduplicate those.",
-      "When filtering or grouping by year, use explicit conditions for each year (e.g., start_date LIKE '2024-%' or SUBSTR(start_date, 1, 4) = '2024'). Never use ELSE clauses to bucket remaining records into a year — this incorrectly captures data from other years."
+      "DATABASE: DuckDB (not SQLite, not PostgreSQL)",
+
+      "DATE HANDLING - dates are stored as VARCHAR in 'YYYY-MM-DD HH:MM:SS' format:",
+      "  - Cast to timestamp: CAST(start_date AS TIMESTAMP)",
+      "  - Extract year: YEAR(CAST(start_date AS TIMESTAMP))",
+      "  - Extract month: MONTH(CAST(start_date AS TIMESTAMP))",
+      "  - Filter by year: WHERE YEAR(CAST(start_date AS TIMESTAMP)) = 2024",
+      "  - Filter by month: WHERE start_date >= '2024-11-01' AND start_date < '2024-12-01'",
+
+      "DURATION CALCULATION - to get duration between start_date and end_date:",
+      "  - Minutes: DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))",
+      "  - Hours: DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) / 60.0",
+      "  - DO NOT use julianday() or strftime() - those are SQLite, not DuckDB",
+
+      "SLEEP QUERIES - type='SleepAnalysis' uses value_category, NOT value:",
+      "  - Sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed",
+      "  - Actual sleep = AsleepCore + AsleepDeep + AsleepREM (exclude Awake, InBed)",
+      "  - Sleep duration example: SELECT SUM(DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))) / 60.0 AS hours_slept FROM health_data WHERE type = 'SleepAnalysis' AND value_category IN ('AsleepCore', 'AsleepDeep', 'AsleepREM')",
+
+      "AGGREGATION RULES:",
+      "  - Steps, distance, calories: use SUM(value), each row is a partial measurement",
+      "  - Heart rate, weight: use AVG(value) for averages, or just value for point-in-time",
+      "  - Counting events: use COUNT(*)",
+
+      "WORKOUT QUERIES - type starts with 'Workout' (e.g., 'WorkoutWalking', 'WorkoutCycling'):",
+      "  - Has duration_min, distance_km, energy_kcal columns",
+      "  - Example: SELECT SUM(duration_min) FROM health_data WHERE type = 'WorkoutWalking'",
+
+      "STRING ESCAPING: double apostrophes, not backslash: 'Scott''s Watch'"
     ]
   }
 }

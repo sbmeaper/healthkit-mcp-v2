@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-from semantic_layer import load_config, build_semantic_context
+from semantic_layer import load_config, build_semantic_context, format_context_for_prompt
 from query_executor import execute_with_retry
 from llm_client import generate_sql
 
@@ -8,7 +8,8 @@ mcp = FastMCP("healthkit")
 
 # Load config and build semantic context at startup
 config = load_config()
-semantic_context = build_semantic_context(config)
+semantic_context_data = build_semantic_context(config)
+semantic_context = format_context_for_prompt(semantic_context_data)
 
 
 @mcp.tool()

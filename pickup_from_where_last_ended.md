@@ -1,13 +1,13 @@
 # healthkit-mcp-v2 — Project Status Summary
 
 **Last Updated:** December 19, 2025  
-**Status:** Core functionality complete, minor tuning needed for date arithmetic
+**Status:** Major refactoring complete, awaiting testing with new model
 
 ---
 
 ## What This Project Does
 
-An MCP server that lets users ask natural language questions about their Apple HealthKit data via Claude Desktop. Questions are translated to SQL by a local LLM (Ollama + Qwen 2.5 7B), executed against a DuckDB/Parquet database, and results returned with diagnostics.
+An MCP server that lets users ask natural language questions about their Apple HealthKit data via Claude Desktop. Questions are translated to SQL by a local LLM (Ollama), executed against a DuckDB/Parquet database, and results returned with diagnostics.
 
 ---
 
@@ -28,31 +28,141 @@ An MCP server that lets users ask natural language questions about their Apple H
 /Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet
 ```
 
-**Raw HealthKit Export:**
-```
-/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/export.xml
-```
-
 ---
 
 ## Architecture
 
 ```
-Claude Desktop → MCP Server (Python) → Ollama (Qwen 2.5 7B) → DuckDB (Parquet)
+Claude Desktop → MCP Server (Python) → Ollama (Qwen 2.5 Coder 7B) → DuckDB (Parquet)
 ```
 
 ---
 
-## MCP Server Files (/healthkit-mcp-v2/)
+## Recent Session: What We Did (Dec 19, 2025)
 
-| File | Purpose |
+We identified 4 improvements based on research into Qwen2.5-Coder best practices and implemented all of them:
+
+### Issue #1: Wrong Model Variant
+- **Problem:** Was using `qwen2.5:7b` (general model)
+- **Solution:** Switch to `qwen2.5-coder:7b` (code-specialized, trained on 5.5T tokens including SQL)
+- **Status:** Model was downloading (~30 min). Config updated to use it.
+- **Action needed:** Verify `ollama list` shows `qwen2.5-coder:7b` is available
+
+### Issue #2: Prompt Template Structure
+- **Problem:** Generic prompt format didn't match Qwen2.5-Coder's training format
+- **Solution:** Restructured prompt to match their text-to-SQL training:
+  1. Schema as CREATE TABLE DDL
+  2. Sample data rows
+  3. Additional knowledge/hints as SQL comments
+  4. Natural language question
+  5. Prompt ends with `SELECT` to prime continuation
+- **Status:** ✅ Complete — `semantic_layer.py` and `llm_client.py` rewritten
+
+### Issue #3: DuckDB-Specific Hints
+- **Problem:** Model was generating SQLite syntax (julianday, strftime) instead of DuckDB
+- **Solution:** Added explicit DuckDB dialect hints with concrete examples:
+  - `DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))`
+  - Explicit "DO NOT use julianday()" warnings
+  - Complete working sleep query example
+- **Status:** ✅ Complete — `config.json` rewritten with detailed hints
+
+### Issue #4: Cleaner Table Reference
+- **Problem:** LLM prompt included 83-character parquet path (visual noise)
+- **Solution:** 
+  - Created persistent DuckDB connection at server startup
+  - Register `health_data` view pointing to parquet file
+  - LLM now generates `SELECT ... FROM health_data` (cleaner, fewer tokens)
+- **Status:** ✅ Complete — `query_executor.py` rewritten
+
+---
+
+## Files Modified
+
+All 4 core Python files were rewritten. Copy these from Claude's output to replace existing files:
+
+| File | Changes |
 |------|---------|
-| `config.json` | All settings: LLM endpoint, Parquet path, retry limit, semantic layer |
-| `semantic_layer.py` | Loads config, runs auto-queries at startup, builds LLM context string |
-| `llm_client.py` | Calls Ollama API, generates SQL from natural language + context |
-| `query_executor.py` | Executes SQL against DuckDB, handles retry logic with LLM correction |
-| `server.py` | MCP server entry point, exposes `query_health_data` tool |
-| `test_db.py` | One-off test script (can be deleted) |
+| `config.json` | New model (`qwen2.5-coder:7b`), detailed DuckDB hints with examples |
+| `semantic_layer.py` | Returns structured dict, formats as DDL + samples + hints |
+| `llm_client.py` | Qwen-optimized prompt ending with `SELECT`, uses `health_data` table |
+| `query_executor.py` | Persistent connection, creates `health_data` view at startup |
+| `server.py` | Minor change to call `format_context_for_prompt()` |
+
+---
+
+## Current config.json
+
+```json
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "qwen2.5-coder:7b",
+    "endpoint": "http://localhost:11434/api/generate"
+  },
+  "database": {
+    "parquet_path": "/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet",
+    "max_retries": 3
+  },
+  "semantic_layer": {
+    "auto_queries": [
+      "SELECT DISTINCT type FROM '{parquet_path}' ORDER BY type",
+      "SELECT MIN(start_date) as min_date, MAX(start_date) as max_date FROM '{parquet_path}'",
+      "SELECT type, COUNT(*) as row_count FROM '{parquet_path}' GROUP BY type ORDER BY row_count DESC",
+      "SELECT DISTINCT type, value_category FROM '{parquet_path}' WHERE value_category IS NOT NULL ORDER BY type, value_category"
+    ],
+    "static_context": [
+      "DATABASE: DuckDB (not SQLite, not PostgreSQL)",
+      
+      "DATE HANDLING - dates are stored as VARCHAR in 'YYYY-MM-DD HH:MM:SS' format:",
+      "  - Cast to timestamp: CAST(start_date AS TIMESTAMP)",
+      "  - Extract year: YEAR(CAST(start_date AS TIMESTAMP))",
+      "  - Extract month: MONTH(CAST(start_date AS TIMESTAMP))",
+      "  - Filter by year: WHERE YEAR(CAST(start_date AS TIMESTAMP)) = 2024",
+      "  - Filter by month: WHERE start_date >= '2024-11-01' AND start_date < '2024-12-01'",
+      
+      "DURATION CALCULATION - to get duration between start_date and end_date:",
+      "  - Minutes: DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))",
+      "  - Hours: DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) / 60.0",
+      "  - DO NOT use julianday() or strftime() - those are SQLite, not DuckDB",
+      
+      "SLEEP QUERIES - type='SleepAnalysis' uses value_category, NOT value:",
+      "  - Sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed",
+      "  - Actual sleep = AsleepCore + AsleepDeep + AsleepREM (exclude Awake, InBed)",
+      "  - Sleep duration example: SELECT SUM(DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))) / 60.0 AS hours_slept FROM health_data WHERE type = 'SleepAnalysis' AND value_category IN ('AsleepCore', 'AsleepDeep', 'AsleepREM')",
+      
+      "AGGREGATION RULES:",
+      "  - Steps, distance, calories: use SUM(value), each row is a partial measurement",
+      "  - Heart rate, weight: use AVG(value) for averages, or just value for point-in-time",
+      "  - Counting events: use COUNT(*)",
+      
+      "WORKOUT QUERIES - type starts with 'Workout' (e.g., 'WorkoutWalking', 'WorkoutCycling'):",
+      "  - Has duration_min, distance_km, energy_kcal columns",
+      "  - Example: SELECT SUM(duration_min) FROM health_data WHERE type = 'WorkoutWalking'",
+      
+      "STRING ESCAPING: double apostrophes, not backslash: 'Scott''s Watch'"
+    ]
+  }
+}
+```
+
+---
+
+## Claude Desktop Configuration
+
+File: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "healthkit": {
+      "command": "/Users/scottbartlow/PycharmProjects/healthkit-mcp-v2/.venv/bin/python",
+      "args": [
+        "/Users/scottbartlow/PycharmProjects/healthkit-mcp-v2/server.py"
+      ]
+    }
+  }
+}
+```
 
 ---
 
@@ -73,7 +183,7 @@ source_name       VARCHAR     -- device/app that recorded the data
 
 **Key design decisions:**
 - `value` for numeric measurements, `value_category` for categorical (sleep stages, stand hours)
-- Dates stored as strings (faster parsing, DuckDB casts on query)
+- Dates stored as strings (DuckDB casts on query)
 - ActivitySummary and Correlation records are skipped (computed/derived data)
 
 ---
@@ -89,66 +199,82 @@ source_name       VARCHAR     -- device/app that recorded the data
 - SleepAnalysis: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed
 - AppleStandHour: Stood, Idle
 - AudioExposureEvent: MomentaryLimit
-- HighHeartRateEvent: NotApplicable
-- MindfulSession: NotApplicable
 
 ---
 
-## Current config.json
+## Next Steps When Resuming
 
-```json
-{
-  "llm": {
-    "provider": "ollama",
-    "model": "qwen2.5:7b",
-    "endpoint": "http://localhost:11434/api/generate"
-  },
-  "database": {
-    "parquet_path": "/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet",
-    "max_retries": 3
-  },
-  "semantic_layer": {
-    "auto_queries": [
-      "SELECT DISTINCT type FROM '{parquet_path}' ORDER BY type",
-      "SELECT MIN(start_date) as min_date, MAX(start_date) as max_date FROM '{parquet_path}'",
-      "SELECT type, COUNT(*) as row_count FROM '{parquet_path}' GROUP BY type ORDER BY row_count DESC",
-      "SELECT DISTINCT type, value_category FROM '{parquet_path}' WHERE value_category IS NOT NULL ORDER BY type, value_category"
-    ],
-    "static_context": [
-      "All HealthKit data is in a single table. The 'type' column indicates the measurement type.",
-      "Dates are stored as strings in 'YYYY-MM-DD HH:MM:SS' format. Use date functions for filtering.",
-      "The 'value' column contains numeric measurements. The 'value_category' column contains categorical values (like sleep stages).",
-      "When asked 'how many' for metrics like steps, calories, or distance, use SUM(value) not COUNT(*). Each row is a measurement interval, not a single unit.",
-      "In DuckDB, escape apostrophes in strings by doubling them: 'Scott''s Watch' not 'Scott\\'s Watch'.",
-      "For sleep data: 'value_category' contains sleep stages: AsleepCore, AsleepDeep, AsleepREM, AsleepUnspecified, Awake, InBed. To calculate actual sleep time, sum duration of AsleepCore + AsleepDeep + AsleepREM rows only. Calculate duration as (end_date - start_date).",
-      "For AppleStandHour: 'value_category' is either 'Stood' or 'Idle'.",
-      "To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings."
-    ]
-  }
-}
+1. **Verify model downloaded:**
+   ```bash
+   ollama list
+   ```
+   Should show `qwen2.5-coder:7b`
+
+2. **Copy all updated files to project** (if not already done)
+
+3. **Restart Claude Desktop** (to reload MCP server)
+
+4. **Test the sleep query that was failing:**
+   ```
+   "How much did I sleep in November 2025?"
+   ```
+   Expected: Should now use `DATE_DIFF` and return actual hours
+
+5. **Test a few other queries to verify nothing broke:**
+   - "How many steps did I take in 2024?" (should still work)
+   - "What was my average heart rate last week?"
+   - "How many walking workouts did I do in 2025?"
+
+6. **If sleep query still fails:** Check the generated SQL in diagnostics. The hints may need further refinement, or we may need to add few-shot examples directly in the prompt.
+
+---
+
+## Debugging Tips
+
+**MCP server logs:**
+```bash
+tail -50 ~/Library/Logs/Claude/mcp-server-healthkit.log
+```
+
+**Test server manually:**
+```bash
+cd /Users/scottbartlow/PycharmProjects/healthkit-mcp-v2
+.venv/bin/python server.py
+```
+
+**Test Ollama directly:**
+```bash
+ollama run qwen2.5-coder:7b "Write a DuckDB SQL query to count rows in a table called health_data"
+```
+
+**Query Parquet directly (bypass LLM):**
+```bash
+python -c "import duckdb; print(duckdb.execute(\"SELECT SUM(DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))) / 60.0 AS hours FROM '/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet' WHERE type = 'SleepAnalysis' AND value_category IN ('AsleepCore', 'AsleepDeep', 'AsleepREM') AND start_date >= '2025-11-01' AND start_date < '2025-12-01'\").fetchall())"
 ```
 
 ---
 
-## Claude Desktop Configuration
+## Potential Future Work
 
-File: `~/Library/Application Support/Claude/claude_desktop_config.json`
+1. **If current changes don't fix sleep queries:** Add few-shot examples directly in prompt (show input question → output SQL pairs)
+2. **Try larger model:** `qwen2.5-coder:14b` or `qwen2.5-coder:32b` if 7B still struggles
+3. **Fine-tune on DuckDB:** There's a `motherduckdb/duckdb-text2sql-25k` dataset for DuckDB-specific training
+4. **Consider SQLCoder:** Alternative model specifically fine-tuned for SQL generation
 
-```json
-{
-  "preferences": {
-    "quickEntryShortcut": "off"
-  },
-  "mcpServers": {
-    "healthkit": {
-      "command": "/Users/scottbartlow/PycharmProjects/healthkit-mcp-v2/.venv/bin/python",
-      "args": [
-        "/Users/scottbartlow/PycharmProjects/healthkit-mcp-v2/server.py"
-      ]
-    }
-  }
-}
-```
+---
+
+## Research Findings (from this session)
+
+**Qwen2.5-Coder Technical Report key points:**
+- Trained on 5.5 trillion tokens including extensive SQL data
+- Text-to-SQL prompt format: DDL schema → sample rows → hints → question
+- Outperforms larger models on Spider/BIRD SQL benchmarks
+- The `-coder` variant significantly better than base `qwen2.5` for SQL tasks
+
+**DuckDB vs SQLite differences that matter:**
+- Date functions: `DATE_DIFF()` not `julianday()`
+- Timestamp casting: `CAST(x AS TIMESTAMP)` 
+- No `strftime()` — use `YEAR()`, `MONTH()`, etc.
 
 ---
 
@@ -158,79 +284,9 @@ File: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Python 3.13
 - Packages: `duckdb`, `requests`, `mcp`
 
-**Export Parser (.venv):**
-- Python (version in that project)
-- Packages: `duckdb`, `lxml`, `pyarrow`
-
 **Ollama:**
 - Installed via macOS app (runs in menu bar)
-- Model: `qwen2.5:7b`
+- Model: `qwen2.5-coder:7b` (after download completes)
 
----
-
-## What's Working
-
-- ✅ Natural language → SQL generation via Qwen 2.5 7B
-- ✅ SQL execution against Parquet via DuckDB
-- ✅ MCP server connected to Claude Desktop
-- ✅ Semantic layer auto-generates context at startup
-- ✅ Diagnostics returned (SQL, tokens, retries, errors)
-- ✅ Sleep stages captured in `value_category` column
-- ✅ Export parser runs in 29 seconds (was ~60 minutes)
-
-**Tested queries that work:**
-- "How many steps did I take in 2024?" → 7,681,979 steps (uses SUM correctly)
-
----
-
-## Current Issue / Next Step
-
-**Sleep duration queries failing.** The LLM struggles with date arithmetic because dates are strings. Last attempt used SQLite syntax (`julianday`) which doesn't exist in DuckDB.
-
-Added hint to config:
-```
-"To calculate duration between dates: use DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP)) to get minutes between two date strings."
-```
-
-**Next action:** After reboot, test this query:
-```
-"How much did I sleep in November 2025?"
-```
-
-If it still fails, the static_context hint may need refinement, or we may need to consider storing dates as proper TIMESTAMP in the Parquet file.
-
----
-
-## Debugging Tips
-
-**MCP server logs:**
-```
-tail -50 ~/Library/Logs/Claude/mcp-server-healthkit.log
-```
-
-**Test server manually:**
-```
-cd /Users/scottbartlow/PycharmProjects/healthkit-mcp-v2
-.venv/bin/python server.py
-```
-
-**Test Ollama:**
-```
-ollama run qwen2.5:7b "SELECT 1"
-```
-
-**Query Parquet directly:**
-```
-python -c "import duckdb; print(duckdb.execute(\"SELECT * FROM '/Users/scottbartlow/PycharmProjects/healthkit_export_ripper_one_table/health.parquet' LIMIT 5\").fetchall())"
-```
-
----
-
-## Potential Future Work
-
-1. Tune prompts for edge cases (date arithmetic, complex aggregations)
-2. Test retry logic intentionally
-3. Try SQLCoder or larger Qwen model for better SQL generation
-4. Consider storing dates as TIMESTAMP in Parquet for simpler queries
-5. Clean up test files
-6. Add README documentation
+**Hardware:**
+- M4 MacBook
