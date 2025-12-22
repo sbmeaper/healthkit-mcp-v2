@@ -137,4 +137,16 @@ Build a **log analyzer as a separate MCP server**. The log is the central artifa
 
 ---
 
+## Completed: Tool Description Update (Dec 2025)
+
+**Problem:** Original tool description was minimal ("Query Apple HealthKit data using natural language") — gave calling clients no context about what's in the data or what filters are available.
+
+**Solution:** Added terse summary of data contents and filter options:
+```
+Data includes steps, sleep, heart rate, workouts, and other health metrics.
+Filterable by type, date range, source, and GPS coordinates (lat/lon).
+```
+
+---
+
 *Ask me for: full config.json, Claude Desktop config, debugging commands, data stats, or environment details*

@@ -22,6 +22,11 @@ def query_health_data(question: str, ctx: Context) -> dict:
 
     Returns:
         Query results with columns, rows, SQL used, and diagnostic metrics
+
+    Data includes steps, sleep, heart rate, workouts, and other health metrics.
+    Filterable by type, date range, source, and GPS coordinates (lat/lon).
+
+    For geographic locations (cities, states, regions), include approximate lat/lon bounding box in your question (e.g., "workouts where start_lat between 42.2 and 42.5 and start_lon between -71.2 and -70.9").
     """
     # Extract client name from MCP context
     try:
