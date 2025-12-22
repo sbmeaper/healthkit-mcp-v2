@@ -36,17 +36,19 @@ def build_semantic_context(config: dict) -> dict:
     # 1. Generate CREATE TABLE DDL (what Qwen2.5-Coder was trained on)
     # Note: The actual table is a view called 'health_data' pointing to the parquet file
     context["schema_ddl"] = """CREATE TABLE health_data (
-    type VARCHAR,           -- measurement type (e.g., 'StepCount', 'HeartRate', 'SleepAnalysis', 'WorkoutWalking')
-    value DOUBLE,           -- numeric value for quantity types (steps, heart rate bpm, etc.)
-    value_category VARCHAR, -- categorical value for category types (sleep stages, stand hours)
-    unit VARCHAR,           -- unit of measurement (count, bpm, kcal, km, etc.)
-    start_date VARCHAR,     -- timestamp as 'YYYY-MM-DD HH:MM:SS'
-    end_date VARCHAR,       -- timestamp as 'YYYY-MM-DD HH:MM:SS'
-    duration_min DOUBLE,    -- workout duration in minutes (workouts only)
-    distance_km DOUBLE,     -- workout distance in km (workouts only)
-    energy_kcal DOUBLE,     -- workout energy in kcal (workouts only)
-    source_name VARCHAR     -- device/app that recorded the data
-);
+        type VARCHAR,           -- measurement type (e.g., 'StepCount', 'HeartRate', 'SleepAnalysis', 'WorkoutWalking')
+        value DOUBLE,           -- numeric value for quantity types (steps, heart rate bpm, etc.)
+        value_category VARCHAR, -- categorical value for category types (sleep stages, stand hours)
+        unit VARCHAR,           -- unit of measurement (count, bpm, kcal, km, etc.)
+        start_date VARCHAR,     -- timestamp as 'YYYY-MM-DD HH:MM:SS'
+        end_date VARCHAR,       -- timestamp as 'YYYY-MM-DD HH:MM:SS'
+        duration_min DOUBLE,    -- workout duration in minutes (workouts only)
+        distance_km DOUBLE,     -- workout distance in km (workouts only)
+        energy_kcal DOUBLE,     -- workout energy in kcal (workouts only)
+        source_name VARCHAR,    -- device/app that recorded the data
+        start_lat DOUBLE,       -- starting latitude from workout GPS track (NULL if no GPS/indoor)
+        start_lon DOUBLE        -- starting longitude from workout GPS track (NULL if no GPS/indoor)
+    );
 -- Query this table as: SELECT ... FROM health_data WHERE ..."""
 
     # 2. Get sample data rows

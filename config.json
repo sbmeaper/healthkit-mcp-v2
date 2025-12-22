@@ -45,7 +45,9 @@
       "  - Has duration_min, distance_km, energy_kcal columns",
       "  - Example: SELECT SUM(duration_min) FROM health_data WHERE type = 'WorkoutWalking'",
 
-      "STRING ESCAPING: double apostrophes, not backslash: 'Scott''s Watch'"
+      "STRING ESCAPING: double apostrophes, not backslash: 'Scott''s Watch'",
+
+      "GPS coordinates (start_lat, start_lon) are only populated for outdoor workouts with location tracking. Use WHERE start_lat IS NOT NULL to filter for workouts with GPS data."
     ]
   }
 }

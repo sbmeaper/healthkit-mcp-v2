@@ -40,6 +40,8 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 | distance_km | DOUBLE | workouts only |
 | energy_kcal | DOUBLE | workouts only |
 | source_name | VARCHAR | device/app |
+| start_lat | DOUBLE | starting latitude from workout GPS track (NULL if no GPS/indoor) |
+| start_lon | DOUBLE | starting longitude from workout GPS track (NULL if no GPS/indoor) |
 
 ## Query Log Schema (query_logs.duckdb)
 
@@ -69,6 +71,9 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 - Steps/distance/calories: `SUM(value)` — rows are partial measurements
 - Heart rate/weight: `AVG(value)` or single value
 - Events: `COUNT(*)`
+
+**GPS queries:** `start_lat` and `start_lon` are only populated for outdoor workouts with location tracking
+- Use `WHERE start_lat IS NOT NULL` to filter for workouts with GPS data
 
 **Restart required:** Changes to config.json or semantic layer need full Claude Desktop restart
 
@@ -113,6 +118,14 @@ Build a **log analyzer as a separate MCP server**. The log is the central artifa
 - Log entries come from anywhere: normal Claude Desktop usage, future automated test bots, etc.
 - Analysis is independent of query source
 - Natural language interface via MCP keeps workflow consistent
+
+---
+
+## Completed: GPS Columns (Dec 2025)
+
+**Added:** `start_lat` and `start_lon` columns to health.parquet for workout GPS data.
+
+**Updated:** `semantic_layer.py` schema DDL and `config.json` static_context hint to enable natural language GPS queries.
 
 ---
 
