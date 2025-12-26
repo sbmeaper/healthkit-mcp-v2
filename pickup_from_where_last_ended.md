@@ -1,17 +1,16 @@
 # healthkit-mcp-v2 — Quick Reference
 
-**Status:** Stable and working (Dec 2025)
+**Status:** Stable, semantic layer optimized (Dec 2025)
 
-## What It Does
+## Architecture
 
-MCP server for natural language queries against Apple HealthKit data. Claude Desktop → MCP Server (Python) → Ollama (qwen2.5-coder:7b) → DuckDB (Parquet)
+Claude Desktop → MCP Server (Python) → Ollama (qwen2.5-coder:7b) → DuckDB (Parquet)
 
 ## Locations
 
 | What | Path |
 |------|------|
 | MCP Server | `~/PycharmProjects/healthkit-mcp-v2/` |
-| Export Parser | `~/PycharmProjects/healthkit_export_ripper_one_table/` |
 | Parquet File | `~/PycharmProjects/healthkit_export_ripper_one_table/health.parquet` |
 | Query Logs | `~/PycharmProjects/healthkit-mcp-v2/query_logs.duckdb` |
 
@@ -19,134 +18,54 @@ MCP server for natural language queries against Apple HealthKit data. Claude Des
 
 | File | Purpose |
 |------|---------|
-| `config.json` | Model config, parquet path, log path, semantic layer hints |
-| `llm_client.py` | Sends prompt to Ollama, parses SQL response |
-| `query_executor.py` | DuckDB connection, creates `health_data` view, executes SQL, retry logic, logging calls |
-| `query_logger.py` | Initializes log table, provides `log_attempt()` function (transactional — no persistent lock) |
+| `config.json` | LLM config, parquet path, semantic layer hints |
 | `semantic_layer.py` | Builds context from auto-queries + static hints |
-| `server.py` | MCP server entry point, extracts client name from Context |
+| `llm_client.py` | Sends prompt to Ollama, parses SQL response |
+| `query_executor.py` | DuckDB connection, retry logic, logging |
+| `server.py` | MCP server entry point |
 
 ## Schema (health.parquet)
 
 | Column | Type | Notes |
 |--------|------|-------|
 | type | VARCHAR | e.g., "StepCount", "SleepAnalysis", "WorkoutWalking" |
-| value | DOUBLE | numeric measurements (steps, heart rate) |
+| value | DOUBLE | numeric measurements |
 | value_category | VARCHAR | categorical (sleep stages, stand hours) |
-| unit | VARCHAR | quantity types only |
-| start_date | VARCHAR | "YYYY-MM-DD HH:MM:SS" |
-| end_date | VARCHAR | "YYYY-MM-DD HH:MM:SS" |
-| duration_min | DOUBLE | workouts only |
-| distance_km | DOUBLE | workouts only |
-| energy_kcal | DOUBLE | workouts only |
-| source_name | VARCHAR | device/app |
-| start_lat | DOUBLE | starting latitude from workout GPS track (NULL if no GPS/indoor) |
-| start_lon | DOUBLE | starting longitude from workout GPS track (NULL if no GPS/indoor) |
+| start_date, end_date | VARCHAR | "YYYY-MM-DD HH:MM:SS" |
+| duration_min, distance_km, energy_kcal | DOUBLE | workouts only |
+| start_lat, start_lon | DOUBLE | GPS for outdoor workouts |
 
-## Query Log Schema (query_logs.duckdb)
+## Semantic Layer Design Principles
 
-| Column | Type | Notes |
-|--------|------|-------|
-| request_id | VARCHAR | UUID, ties retry attempts together |
-| attempt_number | INTEGER | 1, 2, 3... |
-| timestamp | TIMESTAMP | When attempt occurred |
-| client | VARCHAR | From MCP context (e.g., "claude-ai") |
-| nlq | VARCHAR | Natural language question |
-| sql | VARCHAR | Generated SQL for this attempt |
-| success | BOOLEAN | Did this attempt execute without error? |
-| error_message | VARCHAR | Null if success |
-| row_count | INTEGER | Null if failed |
-| execution_time_ms | INTEGER | Query execution time |
+1. **Pattern-based hints over exhaustive mappings** — e.g., "Dietary* prefix" covers 30+ types
+2. **Disambiguate only where ambiguous** — calories needed explicit mapping (consumed vs burned vs basal)
+3. **Include SQL patterns for complex aggregations** — daily average pattern: SUM by day, then AVG
+4. **DuckDB-specific syntax** — DATE_DIFF, DATE_TRUNC, no julianday/strftime
+
+## Key Semantic Layer Sections
+
+- **Type patterns**: Dietary*, Workout*, Distance*, Apple* prefixes
+- **Calorie disambiguation**: consumed→DietaryEnergyConsumed, burned→ActiveEnergyBurned, basal→BasalEnergyBurned
+- **Aggregation rules**: Cumulative (SUM) vs point-in-time (AVG) metrics
+- **Daily average pattern**: `SELECT AVG(daily_total) FROM (SELECT SUM(value) ... GROUP BY DATE_TRUNC('day', ...))`
+- **Sleep handling**: type='SleepAnalysis' uses value_category, not value; duration via DATE_DIFF
 
 ## Critical Gotchas
 
-**DuckDB, not SQLite:**
-- Use `DATE_DIFF('minute', CAST(start_date AS TIMESTAMP), CAST(end_date AS TIMESTAMP))`
-- NOT `julianday()` or `strftime()`
+- **Sleep queries**: Use `value_category` (AsleepCore, AsleepDeep, AsleepREM), not `value`
+- **Daily averages**: Must SUM by day first, then AVG across days
+- **DuckDB syntax**: Use DATE_DIFF, not julianday(); use >= and < for date ranges, not BETWEEN
+- **GPS queries**: Calling LLM (Claude) provides lat/lon bounding boxes, Qwen just filters on coordinates
+- **Restart required**: Config changes need Claude Desktop restart
 
-**Sleep queries:** type='SleepAnalysis' uses `value_category`, not `value`
-- Actual sleep = AsleepCore + AsleepDeep + AsleepREM (exclude Awake, InBed)
-
-**Aggregation:**
-- Steps/distance/calories: `SUM(value)` — rows are partial measurements
-- Heart rate/weight: `AVG(value)` or single value
-- Events: `COUNT(*)`
-
-**GPS queries:** `start_lat` and `start_lon` are only populated for outdoor workouts with location tracking
-- Use `WHERE start_lat IS NOT NULL` to filter for workouts with GPS data
-
-**Restart required:** Changes to config.json or semantic layer need full Claude Desktop restart
-
----
-
-## Querying the Logs
-
-With transactional logging (completed Dec 2025), log queries work even while Claude Desktop is running:
+## Query Log Analysis
 
 ```bash
 cd ~/PycharmProjects/healthkit-mcp-v2
 source .venv/bin/activate
-python -c "import duckdb; con = duckdb.connect('query_logs.duckdb'); print(con.execute('SELECT * FROM query_log ORDER BY timestamp DESC LIMIT 10').fetchall()); con.close()"
+python -c "import duckdb; con = duckdb.connect('query_logs.duckdb'); print(con.execute('SELECT * FROM query_log ORDER BY timestamp DESC LIMIT 10').fetchall())"
 ```
 
-Useful queries:
-```sql
--- Failed queries (for semantic layer improvement)
-SELECT nlq, sql, error_message FROM query_log WHERE success = FALSE;
+## Sister Project
 
--- Retry patterns
-SELECT request_id, COUNT(*) as attempts FROM query_log GROUP BY request_id HAVING COUNT(*) > 1;
-
--- Queries by client
-SELECT client, COUNT(*) FROM query_log GROUP BY client;
-```
-
----
-
-## Next Up: Log Analyzer MCP
-
-### Architecture Decision
-Build a **log analyzer as a separate MCP server**. The log is the central artifact — decouple how queries get generated from how they get analyzed.
-
-### What It Does
-- Reads `query_logs.duckdb`
-- Identifies patterns (failures, retries, common error types)
-- Suggests semantic layer improvements
-- Accessed via Claude Desktop with natural language (e.g., "analyze the health server logs for the past 2 days")
-
-### Why This Approach
-- Log entries come from anywhere: normal Claude Desktop usage, future automated test bots, etc.
-- Analysis is independent of query source
-- Natural language interface via MCP keeps workflow consistent
-
----
-
-## Completed: GPS Columns (Dec 2025)
-
-**Added:** `start_lat` and `start_lon` columns to health.parquet for workout GPS data.
-
-**Updated:** `semantic_layer.py` schema DDL and `config.json` static_context hint to enable natural language GPS queries.
-
----
-
-## Completed: Transactional Logging (Dec 2025)
-
-**Problem:** `query_logger.py` previously used a persistent cached connection (`_log_connection` global). This locked `query_logs.duckdb` while Claude Desktop was running, blocking other processes from reading.
-
-**Solution:** Refactored to transactional: open connection, write, close — per `log_attempt()` call. Lock held only milliseconds. Verified working Dec 20, 2025.
-
----
-
-## Completed: Tool Description Update (Dec 2025)
-
-**Problem:** Original tool description was minimal ("Query Apple HealthKit data using natural language") — gave calling clients no context about what's in the data or what filters are available.
-
-**Solution:** Added terse summary of data contents and filter options:
-```
-Data includes steps, sleep, heart rate, workouts, and other health metrics.
-Filterable by type, date range, source, and GPS coordinates (lat/lon).
-```
-
----
-
-*Ask me for: full config.json, Claude Desktop config, debugging commands, data stats, or environment details*
+**log-analyzer-mcp** — Analyzes query logs using Claude Opus 4.5 API for failure patterns and semantic correctness review. Located at `~/PycharmProjects/log-analyzer-mcp/`
